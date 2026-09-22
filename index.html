@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fascial Fibrosis Research Tracker</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --card: #151821;
+    --border: #262b38;
+    --text: #e6e9f0;
+    --muted: #8891a3;
+    --accent: #4fd1c5;
+    --new: #f6ad55;
+    --startup: #63b3ed;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 24px;
+  }
+  header { margin-bottom: 28px; }
+  h1 { font-size: 22px; margin: 0 0 4px 0; font-weight: 600; }
+  .subtitle { color: var(--muted); font-size: 13px; }
+  .tabs { display: flex; gap: 8px; margin: 20px 0; flex-wrap: wrap; }
+  .tab {
+    background: var(--card); border: 1px solid var(--border);
+    color: var(--muted); padding: 6px 14px; border-radius: 20px;
+    font-size: 13px; cursor: pointer;
+  }
+  .tab.active { color: var(--text); border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; position: relative;
+  }
+  .card .badges { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  .badge {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 2px 8px; border-radius: 10px; font-weight: 600;
+  }
+  .badge.new { background: rgba(246,173,85,0.15); color: var(--new); }
+  .badge.startup { background: rgba(99,179,237,0.15); color: var(--startup); }
+  .badge.status { background: rgba(255,255,255,0.06); color: var(--muted); }
+  .card h3 { margin: 0 0 6px 0; font-size: 15px; }
+  .card .headline { font-size: 13px; color: var(--text); margin-bottom: 8px; }
+  .card .meta { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .card a { color: var(--accent); text-decoration: none; font-size: 12px; }
+  .card a:hover { text-decoration: underline; }
+  .empty { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
+  .loading { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
+  .refresh-note { color: var(--muted); font-size: 11px; margin-top: 24px; text-align: right; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Fascial Fibrosis Research Tracker</h1>
+  <div class="subtitle">Dupuytren's · Peyronie's · Ledderhose — startup biomed watch + clinical trial monitor</div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-filter="all">All</div>
+  <div class="tab" data-filter="company">Companies</div>
+  <div class="tab" data-filter="trial">Trials</div>
+  <div class="tab" data-filter="new">New Only</div>
+</div>
+
+<div id="content" class="loading">Loading…</div>
+<div class="refresh-note" id="refresh-note"></div>
+
+<script>
+  // Same Supabase project as the BD dashboard (mwdjhinpicvxjetrcvkc), new table.
+  // Anon/read-only key — safe to embed client-side, RLS restricts writes to service role.
+  const SUPABASE_URL = "https://mwdjhinpicvxjetrcvkc.supabase.co";
+  const SUPABASE_ANON_KEY = "REPLACE_WITH_ANON_KEY";
+
+  let allEntries = [];
+  let currentFilter = "all";
+
+  async function loadEntries() {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/fascial_fibrosis_entries?select=*&order=last_updated_at.desc`,
+      {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+      }
+    );
+    if (!res.ok) {
+      document.getElementById("content").innerHTML =
+        `<div class="empty">Could not load data (${res.status}). Check anon key / RLS policy.</div>`;
+      return;
+    }
+    allEntries = await res.json();
+    render();
+  }
+
+  function badge(cls, text) {
+    return `<span class="badge ${cls}">${text}</span>`;
+  }
+
+  function renderCard(e) {
+    const badges = [];
+    if (e.is_new) badges.push(badge("new", "New"));
+    if (e.trial_is_startup_drug) badges.push(badge("startup", "Startup Drug"));
+    const statusText = e.entry_type === "trial" ? e.trial_status : e.company_status;
+    if (statusText) badges.push(badge("status", statusText));
+
+    const title =
+      e.entry_type === "trial"
+        ? (e.trial_title || e.nct_id || "Untitled trial")
+        : (e.company_name || "Untitled company");
+
+    const metaLines = [];
+    if (e.entry_type === "trial") {
+      if (e.nct_id) metaLines.push(`NCT: ${e.nct_id}`);
+      if (e.trial_sponsor) metaLines.push(`Sponsor: ${e.trial_sponsor}`);
+      if (e.trial_phase) metaLines.push(`Phase: ${e.trial_phase}`);
+      if (e.trial_location) metaLines.push(`Location: ${e.trial_location}`);
+      if (e.trial_condition) metaLines.push(`Condition: ${e.trial_condition}`);
+    } else if (e.entry_type === "company") {
+      if (e.company_summary) metaLines.push(e.company_summary);
+    }
+
+    const link = e.trial_url || e.company_source_url;
+
+    return `
+      <div class="card" data-type="${e.entry_type}" data-new="${e.is_new}">
+        <div class="badges">${badges.join("")}</div>
+        <h3>${title}</h3>
+        <div class="headline">${e.headline || ""}</div>
+        <div class="meta">${metaLines.join("<br>")}</div>
+        ${link ? `<div style="margin-top:8px;"><a href="${link}" target="_blank" rel="noopener">View source →</a></div>` : ""}
+      </div>
+    `;
+  }
+
+  function render() {
+    const filtered = allEntries.filter((e) => {
+      if (currentFilter === "all") return true;
+      if (currentFilter === "new") return e.is_new;
+      return e.entry_type === currentFilter;
+    });
+
+    const container = document.getElementById("content");
+    if (filtered.length === 0) {
+      container.innerHTML = `<div class="empty">Nothing here yet.</div>`;
+      container.className = "";
+      return;
+    }
+    container.className = "grid";
+    container.innerHTML = filtered.map(renderCard).join("");
+
+    const latest = allEntries.reduce((max, e) => {
+      const t = new Date(e.last_updated_at).getTime();
+      return t > max ? t : max;
+    }, 0);
+    document.getElementById("refresh-note").textContent = latest
+      ? `Last data update: ${new Date(latest).toLocaleString()}`
+      : "";
+  }
+
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      currentFilter = tab.dataset.filter;
+      render();
+    });
+  });
+
+  loadEntries();
+</script>
+
+</body>
+</html>
