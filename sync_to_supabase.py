@@ -37,15 +37,17 @@ def post_entry(payload):
         sys.exit(1)
 
     url = f"{supabase_url}/rest/v1/fascial_fibrosis_entries"
-    # Upsert on nct_id when present (unique index), otherwise plain insert.
+    # Plain insert. The nct_id index in schema.sql is a partial unique index
+    # (WHERE nct_id IS NOT NULL), which PostgREST's on_conflict resolution
+    # does not recognize for merge-duplicates — attempting it raises 42P10.
+    # Caller is responsible for checking existing NCT IDs before calling this
+    # (see the trial-alert cron prompt, which reads the tracker file first).
     headers = {
         "apikey": service_key,
         "Authorization": f"Bearer {service_key}",
         "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=representation",
+        "Prefer": "return=representation",
     }
-    if payload.get("nct_id"):
-        url += "?on_conflict=nct_id"
 
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
